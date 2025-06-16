@@ -4,7 +4,10 @@
   "type": "module",
   "main": "server.js",
   "scripts": {
-    "start": "node server.js"
+    "start": "node server.js",
+    "heroku:init": "heroku login && heroku create heroku-backend-nodejs --stack heroku-22",
+    "heroku:push": "git push heroku main",
+    "heroku:open": "heroku open"
   },
   "dependencies": {
     "express": "^4.18.2"
