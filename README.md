@@ -95,3 +95,11 @@ Once deployed, access your frontend at:
 or
 
 [My example deployed](https://heroku-frontend-nodejs-8bbe5ba4674a.herokuapp.com/)
+
+or
+
+execute in terminal
+
+```bash
+heroku open
+```
