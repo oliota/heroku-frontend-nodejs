@@ -55,6 +55,11 @@ To integrate with your live Heroku backend:
 const apiBase = "https://heroku-backend-nodejs-XXXX.herokuapp.com/api/v1/expenses";
 ```
 
+or
+```js
+const apiBase = "https://heroku-backend-nodejs-fd16668acdd6.herokuapp.com/api/v1/expenses";
+```
+
 3. Commit and redeploy.
 
 ---
@@ -78,3 +83,15 @@ heroku-frontend-nodejs/
 - Real-time updates in the UI
 - Modal confirmation for deletion
 - Integrated with RESTful backend on Heroku
+
+
+
+## 🌍 Live Deployment
+
+Once deployed, access your frontend at:
+
+[https://heroku-frontend-nodejs-XXXX.herokuapp.com/](https://heroku-frontend-nodejs-XXXX.herokuapp.com/)
+
+or
+
+[My example deployed](https://heroku-frontend-nodejs-8bbe5ba4674a.herokuapp.com/)
