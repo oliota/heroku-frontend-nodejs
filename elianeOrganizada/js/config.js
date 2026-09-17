@@ -1,0 +1,1 @@
+window.ElianeConfig={apiBase:location.hostname==="localhost"||location.hostname==="127.0.0.1"?"http://localhost:3002/api/v1":"https://heroku-backend-nodejs-fd16668acdd6.herokuapp.com/api/v1",publicPath:"/elianeOrganizada"};
