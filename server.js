@@ -8,4 +8,4 @@ app.use(express.static(__dirname))
 app.get(['/elianeOrganizada','/elianeOrganizada/'],(_req,res)=>res.sendFile(path.join(__dirname,'elianeOrganizada','index.html')))
 app.get('*',(_req,res)=>res.sendFile(path.join(__dirname,'index.html')))
 const PORT=process.env.PORT||3000
-app.listen(PORT)
+app.listen(PORT,()=>console.log(`Frontend running on http://localhost:${PORT}/elianeOrganizada`))
