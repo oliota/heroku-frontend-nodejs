@@ -2,6 +2,11 @@ node_modules/
 npm-debug.log*
 .env
 .env.*
+!.env.example
 .DS_Store
 Thumbs.db
 .vscode/
+test-results/
+playwright-report/
+logs/
+.codebase-memory/

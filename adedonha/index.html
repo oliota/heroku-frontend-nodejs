@@ -1,0 +1,57 @@
+<!doctype html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1, viewport-fit=cover, interactive-widget=resizes-content"
+    />
+    <meta name="theme-color" content="#2d2a4a" />
+    <meta
+      name="description"
+      content="Adedonha — STOP! Gire a roda, encontre as palavras e jogue com seus amigos."
+    />
+    <title>Adedonha — STOP!</title>
+    <link rel="icon" href="/adedonha/assets/icon.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="/adedonha/css/app.css" />
+    <link rel="stylesheet" href="/adedonha/css/wheel.css" />
+    <script src="/adedonha/runtime-config.js"></script>
+    <script type="module" src="/adedonha/js/app.js"></script>
+  </head>
+  <body>
+    <a class="skip" href="#screen">Ir para o jogo</a>
+    <div class="shell">
+      <header class="topbar">
+        <a class="brand" href="#home" aria-label="Adedonha, início"
+          ><span class="brand-icon">A<span>!</span></span
+          ><span>ADEDONHA<small>O clássico das palavras.</small></span></a
+        >
+        <nav aria-label="Navegação principal">
+          <button
+            id="friends-nav"
+            class="icon-button"
+            title="Amigos"
+            aria-label="Amigos"
+          >
+            ♧<span id="friends-badge" class="badge" hidden></span>
+          </button>
+          <button id="profile-nav" class="profile-button" aria-label="Perfil">
+            ◎ <span>Perfil</span>
+          </button>
+        </nav>
+      </header>
+      <div id="connection" class="connection" role="status" hidden></div>
+      <main id="screen" tabindex="-1">
+        <p class="loading">Preparando a roda…</p>
+      </main>
+      <footer class="site-footer">
+        <span>ADEDONHA <b>×</b> STOP</span
+        ><span>Uma letra. Infinitas possibilidades.</span
+        ><a href="/">oliota.com ↗</a>
+      </footer>
+    </div>
+    <div id="notifications" aria-live="polite" aria-atomic="true"></div>
+    <dialog id="dialog" aria-labelledby="dialog-title"></dialog>
+    <noscript>Ative o JavaScript para jogar Adedonha.</noscript>
+  </body>
+</html>
