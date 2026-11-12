@@ -26,11 +26,6 @@ export function home(ctx) {
       el("p", { class: "home-lead" }, "Escolha como quer jogar."),
       el("div", { class: "wheel-stage" }, wheel.node),
       el("p", { class: "wheel-caption" }, "Toque numa opção da roda para começar."),
-      el("div", { class: "home-quick-actions" },
-        el("button", { type: "button", class: "home-quick local", onClick: () => ctx.go("local") }, "Jogar local"),
-        el("button", { type: "button", class: "home-quick online", onClick: () => ctx.go("online") }, "Jogar online"),
-      ),
-      el("a", { class: "home-site-link", href: "https://oliota.com", target: "_blank", rel: "noopener noreferrer" }, "Conheça oliota.com ↗"),
     ),
   );
   return { node, cleanup: () => wheel.destroy() };

@@ -1484,3 +1484,42 @@ body.preview-mobile .review-screen { max-width: 100%; }
 .recent-room-info small { overflow-wrap: anywhere; }
 .recent-room-row .button { min-height: 42px; }
 @media (max-width: 520px) { .recent-room-row .button { width: 100%; } }
+
+
+body:has(.home-focused) .shell { min-height: 100dvh; max-width: 1240px; }
+body:has(.home-focused) .topbar { height: clamp(58px, 10dvh, 82px); flex-shrink: 0; }
+body:has(.home-focused) main { display: flex; flex: 1 1 auto; padding: 0; min-height: 0; }
+.home.home-focused { flex: 1; width: 100%; margin: 0; padding: 8px 8px 12px; align-items: center; justify-content: center; }
+.home-focused .home-main { width: 100%; gap: clamp(4px, 1.2dvh, 10px); }
+.home-focused h1 { font-size: clamp(1.5rem, min(4vw, 4dvh), 2.65rem); }
+.home-focused .home-lead { font-size: clamp(12px, 1.8dvh, 15px); margin: 0; line-height: 1.35; }
+.home-focused .wheel-stage { flex: 0 0 auto; padding: 9px 0 4px; }
+.home-focused .wheel-stage .wheel-wrap { width: min(78vw, 460px, max(190px, calc(100dvh - 245px))); max-width: 100%; }
+.home-focused .wheel-caption { font-size: 12px; margin: 3px 0 0; line-height: 1.25; }
+.home-focused .home-quick-actions, .home-focused .home-site-link { display: none; }
+@media (max-width: 620px) {
+  body:has(.home-focused) .shell { padding-inline: 12px; }
+  body:has(.home-focused) .topbar { min-height: 74px; height: auto; padding: 8px 0; gap: 7px; flex-wrap: wrap; justify-content: center; }
+  body:has(.home-focused) .topbar .brand { margin-right: auto; }
+  body:has(.home-focused) .topbar nav { gap: 6px; justify-content: flex-end; flex-wrap: wrap; }
+  body:has(.home-focused) .topbar nav .header-site-link { min-height: 34px; font-size: 11px; padding-inline: 8px; }
+  body:has(.home-focused) .topbar nav .profile-button { min-height: 34px; height: 36px; min-width: 36px; padding-inline: 9px; font-size: 12px; }
+  body:has(.home-focused) .topbar nav .icon-button { height: 36px; min-width: 36px; font-size: 19px; }
+  .home.home-focused { padding: 8px 4px 12px; }
+  .home-focused .wheel-stage .wheel-wrap { width: min(86vw, 390px, max(180px, calc(100dvh - 235px))); }
+  .home-focused .wheel-label { font-size: clamp(9px, 2.4vw, 12px); gap: 3px; }
+  .home-focused .wheel-symbol { font-size: clamp(17px, 5vw, 25px); }
+}
+body.preview-mobile:has(.home-focused) .topbar { height: auto; min-height: 65px; padding: 8px 0; flex-wrap: wrap; justify-content: center; gap: 7px; }
+body.preview-mobile:has(.home-focused) .topbar .brand { margin-right: auto; }
+body.preview-mobile:has(.home-focused) .topbar nav { flex-wrap: wrap; justify-content: center; gap: 5px; }
+body.preview-mobile:has(.home-focused) .topbar nav .header-site-link { min-height: 34px; font-size: 11px; padding-inline: 8px; }
+body.preview-mobile:has(.home-focused) .topbar nav .profile-button { min-height: 34px; height: 36px; min-width: 36px; padding-inline: 9px; font-size: 12px; }
+body.preview-mobile:has(.home-focused) .topbar nav .icon-button { min-width: 36px; height: 36px; font-size: 19px; }
+body.preview-mobile .home-focused .wheel-stage .wheel-wrap { width: min(85vw, 390px, max(180px, calc(100dvh - 255px))); }
+@media (max-height: 650px) {
+  .home-focused .wheel-stage .wheel-wrap { width: min(78vw, 390px, max(170px, calc(100dvh - 210px))); }
+  .home-focused .home-main { gap: 3px; }
+  .home-focused .wheel-stage { padding-top: 5px; }
+  .home-focused .wheel-caption { font-size: 11px; }
+}
