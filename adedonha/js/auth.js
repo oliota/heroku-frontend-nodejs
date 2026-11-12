@@ -26,7 +26,6 @@ export const auth = {
     const settings = config.firebase;
     if (
       !settings.apiKey ||
-      !settings.appId ||
       settings.projectId !== "adedonha-stop"
     ) {
       this.error =
@@ -45,6 +44,7 @@ export const auth = {
       this.sdk = authSDK;
       this.firestore = firestoreSDK;
       this.instance = authSDK.getAuth(this.app);
+      await authSDK.setPersistence(this.instance, authSDK.browserLocalPersistence);
       this.db = firestoreSDK.getFirestore(this.app);
       this.unsubscribe = authSDK.onAuthStateChanged(this.instance, (user) => {
         this.user = user;
@@ -55,12 +55,25 @@ export const auth = {
         "Firebase indisponível. Verifique a configuração e a conexão. O modo local continua disponível.";
     }
   },
+  async guest() {
+    if (!this.sdk) throw new ApiError("FIREBASE_UNAVAILABLE", this.error);
+    if (this.user) return this.user;
+    const result = await this.sdk.signInAnonymously(this.instance);
+    this.user = result.user;
+    return result.user;
+  },
   async login() {
     if (!this.sdk) throw new ApiError("FIREBASE_UNAVAILABLE", this.error);
-    await this.sdk.signInWithPopup(
-      this.instance,
-      new this.sdk.GoogleAuthProvider(),
-    );
+    const provider = new this.sdk.GoogleAuthProvider();
+    if (this.user?.isAnonymous) {
+      try {
+        await this.sdk.linkWithPopup(this.user, provider);
+        return;
+      } catch (error) {
+        if (!["auth/credential-already-in-use", "auth/email-already-in-use"].includes(error.code)) throw error;
+      }
+    }
+    await this.sdk.signInWithPopup(this.instance, provider);
   },
   async logout() {
     if (this.instance) await this.sdk.signOut(this.instance);

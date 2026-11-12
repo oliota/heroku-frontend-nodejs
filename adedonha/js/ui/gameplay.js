@@ -1,4 +1,4 @@
-import { el, button, heading, field, task } from "./dom.js";
+import { el, button, heading, task } from "./dom.js";
 export function gameplay(ctx, room, local = false) {
   const clock = el("span", { class: "clock", "aria-label": "Tempo restante" }),
     status = el("span", { class: "save-state", role: "status" });
@@ -29,6 +29,7 @@ export function gameplay(ctx, room, local = false) {
           inputs[index + 1]?.focus();
         }
       },
+      onBlur: () => { if (!local) drafts.flush().catch(drafts.onError); },
       onFocus: () =>
         setTimeout(
           () =>
@@ -44,33 +45,11 @@ export function gameplay(ctx, room, local = false) {
     (event) =>
       task(event.currentTarget, async () => {
         if (local) return ctx.stopLocal();
-        await drafts.flush();
-        await ctx.client.mutate(
-          "stop",
-          {},
-          {
-            round: true,
-            valid: (r) => r.status === "playing",
-            applied: (r) => !!r.stop_at || r.status === "review",
-          },
-        );
+        await drafts.stopNow();
       }),
     "stop-button",
   );
-  const final = button(
-    "Enviar respostas finais",
-    (event) =>
-      task(event.currentTarget, async () => {
-        inputs.forEach((input) => (input.disabled = true));
-        try {
-          await drafts.flush(true);
-        } finally {
-          update(ctx.state.room);
-        }
-      }),
-    "secondary",
-    { hidden: true },
-  );
+
   const retry = button(
     "Tentar salvar novamente",
     (event) => task(event.currentTarget, () => drafts.flush()),
@@ -78,51 +57,57 @@ export function gameplay(ctx, room, local = false) {
     { hidden: local },
   );
   const grace = el("p", { class: "notice", hidden: true });
+  const grid = el("div", { class: "answers-grid" },
+    room.categories.map((category, i) => el("article", { class: "answer-card" },
+      el("header", { class: "answer-card-header" }, `${String(i + 1).padStart(2, "0")} / ${category}`),
+      el("div", { class: "answer-card-body" }, inputs[i]),
+      el("footer", { class: "answer-card-footer" }, "Uma palavra por categoria"))));
+  const resizeGrid = () => {
+    const width = grid.clientWidth || window.innerWidth - 48;
+    const columns = Math.min(12, room.categories.length, Math.max(1, Math.floor(width / 210)));
+    grid.style.gridTemplateColumns = `repeat(${columns}, minmax(0, 1fr))`;
+  };
+  const gridObserver = typeof ResizeObserver !== "undefined" ? new ResizeObserver(resizeGrid) : null;
+  gridObserver?.observe(grid);
+  window.addEventListener("resize", resizeGrid);
   let last = room;
+  let destroyed = false;
   function tick() {
-    const now = Date.now(),
-      deadline = last.stop_at
-        ? last.stop_at + ctx.bundle.rules.online.submit_grace_ms
-        : last.deadline;
-    const seconds = deadline
-      ? Math.max(0, Math.ceil((deadline - now) / 1000))
+    const seconds = last.deadline
+      ? Math.max(0, Math.ceil((last.deadline - Date.now()) / 1000))
       : null;
-    clock.textContent =
-      seconds === null
-        ? "∞"
-        : `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
-    if (local && deadline && now >= deadline && last.status === "playing")
+    clock.textContent = seconds === null
+      ? "∞"
+      : `${Math.floor(seconds / 60)}:${String(seconds % 60).padStart(2, "0")}`;
+    if (local && last.deadline && Date.now() >= last.deadline && last.status === "playing")
       ctx.stopLocal();
     if (!local && last.stop_at) {
       grace.hidden = false;
-      grace.textContent = `STOP! Envie suas respostas finais. Janela restante: ${seconds}s.`;
-      inputs.forEach(
-        (input) =>
-          (input.disabled = drafts.final || seconds === 0 || !drafts.ready),
-      );
-      final.disabled = drafts.final || seconds === 0 || !drafts.ready;
+      grace.textContent = "STOP! Rodada encerrada. Conferindo os rascunhos já salvos.";
+      inputs.forEach((input) => { input.disabled = true; });
     }
   }
   function update(next) {
     last = next;
     stop.disabled = !!next.stop_at || (!local && !drafts.ready);
-    final.hidden = local || !next.stop_at;
     if (!local) {
+      retry.hidden = drafts.final || (drafts.savedRevision === drafts.revision && !drafts.pendingSubmission);
       status.textContent = drafts.final
         ? "Respostas finais recebidas"
         : status.textContent || "Sincronizado";
       inputs.forEach(
-        (input) => (input.disabled = !drafts.ready || drafts.final),
+        (input) => (input.disabled = !!next.stop_at || !drafts.ready || drafts.final),
       );
     }
     tick();
   }
   update(room);
+  queueMicrotask(resizeGrid);
   const timer = setInterval(tick, 250);
   return {
     node: el(
       "section",
-      { class: "narrow" },
+      { class: "gameplay-screen" },
       heading(
         local ? "MODO LOCAL" : `SALA ${room.code}`,
         `Rodada ${room.round} de ${room.rounds}`,
@@ -141,22 +126,17 @@ export function gameplay(ctx, room, local = false) {
         stop,
       ),
       grace,
-      el(
-        "div",
-        { class: "answers-grid" },
-        room.categories.map((category, i) =>
-          field(`${String(i + 1).padStart(2, "0")} / ${category}`, inputs[i]),
-        ),
-      ),
-      el("div", { class: "actions" }, status, retry, final),
-      !local &&
-        el(
-          "p",
-          { class: "note" },
-          "Microfone indisponível: ainda não existe transmissão de voz integrada.",
-        ),
+      grid,
+      el("footer", { class: "gameplay-footer" }, status, retry,
+        !local && el("span", { class: "note" }, "Microfone indisponível")),
+
     ),
-    cleanup: () => clearInterval(timer),
+    cleanup: () => {
+      destroyed = true;
+      clearInterval(timer);
+      gridObserver?.disconnect();
+      window.removeEventListener("resize", resizeGrid);
+    },
     update,
     status,
   };

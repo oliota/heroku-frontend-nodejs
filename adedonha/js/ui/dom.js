@@ -1,3 +1,4 @@
+import { dialog } from "./dialogs.js";
 export function el(tag, attrs = {}, ...children) {
   const node = document.createElement(tag);
   for (const [key, value] of Object.entries(attrs)) {
@@ -36,16 +37,24 @@ export const field = (label, input) => {
     input.setAttribute("aria-label", label);
   return el("label", { class: "field" }, el("span", {}, label), input);
 };
-export function toast(message, error = false) {
+export function toast(message, error = false, details = null) {
   const area = document.querySelector("#notifications");
-  const notice = el(
-    "div",
-    {
-      class: `toast ${error ? "error" : ""}`,
-      role: error ? "alert" : "status",
-    },
-    message,
-  );
+  const diagnostic = error ? {
+    time: new Date().toISOString(),
+    page: location.pathname + location.hash,
+    code: details?.code || (String(message).match(/\(([A-Z_]+)\)$/)?.[1] ?? "UNKNOWN"),
+    httpStatus: details?.status || null,
+    method: details?.method || "",
+    path: details?.path || "",
+    message: details?.message || String(message),
+  } : null;
+  const notice = el(error ? "button" : "div", {
+    class: `toast ${error ? "error error-detail" : ""}`,
+    ...(error ? { type: "button", "aria-label": "Abrir detalhes do erro" } : {}),
+    role: error ? "alert" : "status",
+  }, String(message), error && el("span", { class: "toast-more" }, "Ver detalhes"));
+  if (error) notice.addEventListener("click", () =>
+    dialog("Detalhes do erro", el("pre", { class: "error-diagnostics" }, JSON.stringify(diagnostic, null, 2))));
   area.replaceChildren(notice);
   setTimeout(() => notice.remove(), 7500);
 }
@@ -83,7 +92,10 @@ const messages = {
   ALREADY_FRIENDS: "Vocês já são amigos.",
   REQUEST_PENDING: "Já existe uma solicitação pendente entre vocês.",
   SELF_FRIENDSHIP: "Use o código de outra pessoa.",
-  NETWORK_ERROR: "Sem conexão com a API. Verifique a rede e tente novamente.",
+  NETWORK_ERROR: "Não foi possível contactar o serviço online.",
+  DEVICE_OFFLINE: "O dispositivo está sem ligação de rede.",
+  API_TIMEOUT: "O servidor demorou a responder. Tente novamente.",
+  API_UNREACHABLE: "O serviço online não está acessível. A sua internet pode estar a funcionar normalmente.",
   CANCELLED: "Operação cancelada.",
   RATE_LIMITED: "Muitas operações. Aguarde um pouco e tente novamente.",
 };
@@ -103,7 +115,7 @@ export async function task(control, operation) {
   try {
     return await operation();
   } catch (error) {
-    if (error.code !== "CANCELLED") toast(explain(error), true);
+    if (error.code !== "CANCELLED") toast(explain(error), true, error);
   } finally {
     if (control?.isConnected) {
       control.disabled = false;

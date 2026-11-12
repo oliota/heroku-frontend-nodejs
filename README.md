@@ -60,17 +60,11 @@ Availability of the new production endpoints has not been confirmed. API failure
 
 ## Google login and Firebase
 
-Use public Web app configuration for **`adedonha-stop`**, separate from `oliota`. `.env.example` lists the variables. Express reads environment variables directly, not `.env` files. PowerShell example:
+The frontend includes the **public** Firebase Auth/Firestore configuration obtained from the existing Godot project's `data/online_config.json`, in `adedonha/public-firebase.json`. No Firebase Web appId is required by the Auth/Firestore modules used here. If a Firebase Web appId becomes available, it can be supplied through `ADEDONHA_FIREBASE_APP_ID` without changing the deployed code. `ADEDONHA_FIREBASE_*` environment variables override the public defaults.
 
-```powershell
-$env:ADEDONHA_FIREBASE_API_KEY = 'public-web-api-key'
-$env:ADEDONHA_FIREBASE_AUTH_DOMAIN = 'adedonha-stop.firebaseapp.com'
-$env:ADEDONHA_FIREBASE_PROJECT_ID = 'adedonha-stop'
-$env:ADEDONHA_FIREBASE_APP_ID = 'public-web-app-id'
-npm start
-```
+The site must be registered in Firebase Authentication's **Authorized domains**, and Google must be enabled as a sign-in provider. Include `localhost` for local testing and `oliota.com` / `www.oliota.com` in production.
 
-Optional fields: `ADEDONHA_FIREBASE_MESSAGING_SENDER_ID`, `ADEDONHA_FIREBASE_STORAGE_BUCKET`. Enable Google sign-in and authorize frontend domains in Firebase Authentication. The official modular SDK loads only with valid project configuration and initializes the named app `adedonha-stop-web`. REST uses **Firebase ID tokens**, never Google OAuth access tokens; a 401 forces one renewal. Application storage never saves tokens or store proofs.
+`/adedonha/runtime-config.js` returns public client configuration only, and no Admin credentials. REST uses Firebase **ID tokens**, never Google OAuth access tokens. A 401 forces one renewal; the application does not store tokens or purchase proofs.
 
 Never expose Firebase Admin service-account keys in this checkout or browser configuration. The backend requires separate Admin credentials. Missing Web configuration disables online login with an explanation while local play and existing pages remain available. Logout cancels API work/listeners/timers, clears room state and UID-scoped caches, and signs out through Firebase. Public preferences/rules and local games remain.
 
@@ -88,9 +82,9 @@ The sibling backend's `docs/ADEDONHA_FRONTEND_INTEGRATION.md` is authoritative. 
 
 All mutations carry `Idempotency-Key`. Uncertain retries preserve identical key/path/body; identical uncertain operations retain their key in memory for manual retry. Room writes are serialized and use current version/IDs. `STALE_VERSION` refreshes state, discards already-applied intents, rechecks validity, and sends a new operation/key. Queued old-room/old-round intents are rejected.
 
-### Backend joining limitation
+### Joining by room code
 
-New members must send a current `version` to `/join`, but `/rooms/:code` and `/game` only permit existing members; `/tickets/status` exposes no version/public preview. **A room code alone cannot complete a first join with the present contract.** The lobby's Copy updated invitation fetches the current room and includes `?room=ABCDE&version=N#join`; manual version entry is also available. A heartbeat or concurrent mutation may invalidate the invite; request a fresh one. Existing members reconnect without a version. Reliable code-only discovery requires a backend contract addition. This frontend does not guess versions or bypass membership.
+New participants join a lobby by five-character room code, without needing its current version. The backend validates authentication, capacity and membership atomically. Invitation links use `?room=ABCDE#join`. A version may still be supplied by other clients for optimistic locking, but the web client does not require one.
 
 The existing Godot app still writes directly to Firestore. `ROOM_MIGRATION_REQUIRED` is displayed. Secure native/web interoperability requires native migration to the API and coordinated Firestore rules deployment; it is not declared complete.
 
@@ -139,3 +133,7 @@ Use the actual remote/branch (older checkouts may use `git push heroku master:ma
 Expenses retains REST add/edit/delete, AJAX updates and delete confirmations. Its Heroku backend `/api/v1/expenses` remains configured in `js/config.js`. The calendar, agenda editing, import/synchronization and backend configuration remain under `elianeOrganizada/`.
 
 Official references: [Node.js](https://nodejs.org/en/docs), [Express](https://expressjs.com/en/4x/api.html), [Bootstrap](https://getbootstrap.com/docs/5.3/), [jQuery](https://api.jquery.com/), [Firebase Web setup](https://firebase.google.com/docs/web/setup), [Google authentication](https://firebase.google.com/docs/auth/web/google-signin), [Firestore listeners](https://firebase.google.com/docs/firestore/query-data/listen), [Playwright](https://playwright.dev/docs/intro), [Prettier](https://prettier.io/docs/), [Heroku](https://devcenter.heroku.com/articles/deploying-nodejs).
+
+## Guest browser sessions and Node development
+
+The web can play solo with a nickname or create/join rooms using a nickname and the existing 5-character code. Google is optional; its verified email is displayed instead of a nickname. Configure Firebase Authentication **Anonymous** and **Google** providers and publish compatible Firestore rules on `adedonha-stop`. Install and run with `npm ci` and `npm run dev` (nodemon). `nodemon` restarts the Express process if server files change; reload the browser for front-end JavaScript/CSS changes. See `docs/ANONYMOUS_ROOMS_PT.md`.

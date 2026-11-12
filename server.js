@@ -1,9 +1,11 @@
 import express from "express";
 import path from "path";
+import { readFileSync } from "node:fs";
 import { fileURLToPath } from "url";
 
 const app = express();
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const defaultFirebase = JSON.parse(readFileSync(path.join(__dirname, "adedonha", "public-firebase.json"), "utf8"));
 app.get("/adedonha/runtime-config.js", (_req, res) => {
   const firebase = Object.fromEntries(
     [
@@ -17,7 +19,7 @@ app.get("/adedonha/runtime-config.js", (_req, res) => {
       key,
       process.env[
         `ADEDONHA_FIREBASE_${key.replace(/[A-Z]/g, (c) => `_${c}`).toUpperCase()}`
-      ] || "",
+      ] || defaultFirebase[key] || "",
     ]),
   );
   const config = {

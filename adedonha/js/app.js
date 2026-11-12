@@ -2,6 +2,7 @@ import { config } from "./config.js";
 import { ApiClient, ApiError } from "./api.js";
 import { auth } from "./auth.js";
 import { storage } from "./storage.js";
+import { savedRoom, rememberRoom, forgetRoom, recoverSavedRoom, isExpiredRoom, recentRooms, markRecentRoom } from "./room-session.js";
 import { loadRules, canonicalLocale, localScores } from "./rules.js";
 import { RoomState, RoomClient } from "./state.js";
 import { Realtime, Drafts } from "./realtime.js";
@@ -18,6 +19,19 @@ import { friends } from "./ui/friends.js";
 import { premium } from "./ui/premium.js";
 
 const screen = document.querySelector("#screen");
+const layoutButton = document.querySelector("#layout-mode");
+const layoutPreference = (() => { try { return localStorage.getItem("adedonha:web-layout") === "mobile"; } catch { return false; } })();
+document.body.classList.toggle("preview-mobile", layoutPreference);
+function updateLayoutButton() {
+  if (layoutButton) layoutButton.textContent = document.body.classList.contains("preview-mobile") ? "Modo PC" : "Modo mobile";
+}
+layoutButton?.addEventListener("click", () => {
+  const mobile = document.body.classList.toggle("preview-mobile");
+  try { localStorage.setItem("adedonha:web-layout", mobile ? "mobile" : "desktop"); } catch {}
+  updateLayoutButton();
+  window.dispatchEvent(new Event("resize"));
+});
+updateLayoutButton();
 const state = new RoomState(),
   api = new ApiClient(config.apiBase, (force) => auth.token(force)),
   client = new RoomClient(api, state);
@@ -25,7 +39,8 @@ let mounted,
   renderGeneration = 0,
   authGeneration = 0,
   pendingRoom = "",
-  profileReady = false;
+  profileReady = false,
+  restoringSession = false;
 const ctx = {
   config,
   auth,
@@ -54,11 +69,16 @@ const ctx = {
     ctx.entitlements?.golden_wheel === true &&
     !ctx.entitlements.revoked,
 };
+let lastRealtimeWarning = 0;
 const realtime = new Realtime({
   auth,
   state,
   client,
-  onError: () => {},
+  onError: (error) => {
+    if (Date.now() - lastRealtimeWarning < 15000) return;
+    lastRealtimeWarning = Date.now();
+    toast(explain(error), true, error);
+  },
   onConnection: connection,
 });
 const drafts = new Drafts({
@@ -68,15 +88,29 @@ const drafts = new Drafts({
   onStatus: (text) => {
     if (mounted?.status) mounted.status.textContent = text;
   },
-  onError: (error) => toast(explain(error), true),
+  onError: (error) => toast(explain(error), true, error),
 });
 ctx.drafts = drafts;
+const busyLayer = document.querySelector("#online-busy");
+let busyCount = 0;
+function setBusy(active, message = "Sincronizando com o jogo…") {
+  busyCount = Math.max(0, busyCount + (active ? 1 : -1));
+  busyLayer.hidden = busyCount === 0;
+  if (active) document.querySelector("#busy-message").textContent = message;
+}
+async function withBusy(message, operation) {
+  setBusy(true, message);
+  try { return await operation(); }
+  finally { setBusy(false); }
+}
+client.onBusy = setBusy;
 function connection(text) {
   const node = document.querySelector("#connection");
   node.hidden = !text;
   node.textContent = text;
 }
 function go(route) {
+  if (route === "home" && (state.room || savedRoom(storage, auth.user?.uid))) clearRoom();
   if (location.hash === `#${route}`) render();
   else location.hash = route;
 }
@@ -155,9 +189,11 @@ async function account() {
   ctx.entitlements = await api.get("/me/entitlements");
 }
 async function createRoom(settings) {
-  await account();
-  const room = await api.mutate("/rooms", { settings });
-  await enter(room);
+  return withBusy("Criando sua sala…", async () => {
+    await account();
+    const room = await api.mutate("/rooms", { settings });
+    await enter(room);
+  });
 }
 async function ticket(code) {
   const status = await api.get(
@@ -175,23 +211,24 @@ async function ticket(code) {
   const issued = await api.get(`/tickets/${encodeURIComponent(code)}`);
   if (!issued.verified) throw new ApiError("TICKET_REQUIRED");
 }
-async function joinRoom(code, version) {
-  await account();
-  if (version !== undefined && (!Number.isSafeInteger(version) || version < 0))
-    throw new Error("A versão do convite deve ser um inteiro não negativo.");
-  await ticket(code);
-  try {
-    const room = await api.mutate(
-      `/rooms/${code}/join`,
-      version === undefined ? {} : { version },
-    );
+async function joinRoom(code) {
+  return withBusy("Entrando na sala…", async () => {
+    await account();
+    await ticket(code);
+    const room = await api.mutate(`/rooms/${code}/join`, {});
     await enter(room);
+  });
+}
+async function returnToRecentRoom(code) {
+  if (!auth.user) return go("profile");
+  try {
+    await joinRoom(code);
   } catch (error) {
-    if (error.code === "STALE_VERSION")
-      throw new ApiError(
-        "STALE_VERSION",
-        "Peça ao líder um convite recém-copiado com a versão atual.",
-      );
+    if (isExpiredRoom(error) || ["ROOM_CLOSED", "INVALID_STATE"].includes(error.code)) {
+      markRecentRoom(storage, auth.user.uid, code, "closed");
+      toast(`A sala ${code} já foi encerrada ou não está mais disponível.`, true, error);
+      return;
+    }
     throw error;
   }
 }
@@ -200,34 +237,67 @@ async function enter(room) {
   client.reset();
   drafts.reset();
   state.apply(room, { replace: true });
-  storage.set(`user:${auth.user.uid}:room`, room.code);
+  rememberRoom(storage, auth.user.uid, room);
   if (room.status === "playing") await drafts.restore();
   realtime.start();
   go("room");
 }
-async function reconnect() {
-  if (pendingRoom || !auth.user) return;
-  const code = state.room?.code || storage.get(`user:${auth.user.uid}:room`);
-  if (!code) return;
-  pendingRoom = code;
-  realtime.stop();
-  client.reset();
-  api.cancel();
+async function restoreSession() {
+  const uid = auth.user?.uid;
+  const saved = savedRoom(storage, uid);
+  if (!uid || !saved || pendingRoom) return false;
+  const generation = authGeneration;
+  pendingRoom = saved.code;
   try {
     await auth.token(true);
-    await api.mutate(`/rooms/${code}/join`, {});
-    const room = await api.get(`/rooms/${code}/game`);
-    state.apply(room, { replace: true });
-    if (room.status === "playing") await drafts.restore();
-    realtime.start();
+    const room = await recoverSavedRoom(storage, uid, api,
+      () => generation === authGeneration && auth.user?.uid === uid);
+    if (generation !== authGeneration || auth.user?.uid !== uid) return false;
+    if (!room) {
+      if (location.hash === "#room") go("home");
+      return false;
+    }
+    realtime.stop();
+    client.reset();
+    drafts.reset();
+    restoringSession = true;
+    try {
+      state.apply(room, { replace: true });
+    } finally {
+      restoringSession = false;
+    }
     connection("");
+    if (["", "home", "room"].includes(location.hash.slice(1)) &&
+        !new URLSearchParams(location.search).has("room"))
+      window.history.replaceState(null, "", `${location.pathname}${location.search}#room`);
     await render();
+    realtime.start();
+    return true;
   } catch (error) {
-    connection(
-      `${explain(error)} Use Reconectar no perfil ou volte ao modo local.`,
-    );
+    if (isExpiredRoom(error)) {
+      forgetRoom(storage, uid);
+      if (location.hash === "#room") go("home");
+    } else connection(`${explain(error)} Sua sala continua guardada para outra tentativa.`);
+    return false;
   } finally {
     pendingRoom = "";
+  }
+}
+
+async function reconnect() {
+  if (!auth.user || pendingRoom) return;
+  if (!state.room) return restoreSession();
+  try {
+    await auth.token(true);
+    await client.refresh();
+    connection("");
+  } catch (error) {
+    if (isExpiredRoom(error)) {
+      markRecentRoom(storage, auth.user.uid, state.room?.code, "closed");
+      forgetRoom(storage, auth.user.uid);
+      clearRoom();
+      go("home");
+    } else connection(`${explain(error)} Tentaremos recuperar a conexão.`);
   }
 }
 async function leaveRoom() {
@@ -250,7 +320,10 @@ function clearRoom() {
   realtime.stop();
   client.reset();
   drafts.reset();
-  if (auth.user) storage.remove(`user:${auth.user.uid}:room`);
+  if (auth.user) {
+    forgetRoom(storage, auth.user.uid);
+    drafts.clearUser(auth.user.uid);
+  }
   state.clear();
 }
 async function loadAccount(user) {
@@ -312,7 +385,18 @@ async function profile() {
       type: "color",
       value: ctx.profile.color || "#6c5ce7",
     });
-  const saved = storage.get(`user:${auth.user.uid}:room`);
+  const recent = recentRooms(storage, auth.user.uid);
+  const recentList = el("div", { class: "recent-room-list" },
+    recent.length
+      ? recent.map((item) => el("div", { class: "recent-room-row" },
+          el("div", { class: "recent-room-info" },
+            el("strong", {}, `Sala ${item.code}`),
+            el("small", { class: "muted" },
+              `${item.status === "closed" || item.status === "finished" ? "Partida encerrada" : "Sala recente"} · ${new Date(item.updated_at).toLocaleString("pt-PT")}`)),
+          button(item.status === "closed" || item.status === "finished" ? "Encerrada" : "Entrar novamente",
+            (event) => task(event.currentTarget, () => returnToRecentRoom(item.code)),
+            "ghost small", { disabled: item.status === "closed" || item.status === "finished" })))
+      : el("p", { class: "muted" }, "Nenhuma sala recente neste navegador."));
   return {
     node: el(
       "section",
@@ -351,16 +435,9 @@ async function profile() {
             }),
           "secondary",
         ),
-        saved &&
-          button(
-            `Reconectar à sala ${saved}`,
-            (event) =>
-              task(event.currentTarget, async () => {
-                await reconnect();
-                if (state.room) go("room");
-              }),
-            "ghost",
-          ),
+        el("h2", {}, "Salas recentes"),
+        el("p", { class: "muted" }, "Volte a uma sala ainda aberta. O jogo só verifica a disponibilidade quando escolher entrar."),
+        recentList,
         state.room && button("Voltar à sala", () => go("room"), "primary"),
         button(
           "Sair da conta",
@@ -378,6 +455,7 @@ async function profile() {
               realtime.stop();
               client.reset();
               drafts.reset();
+              drafts.clearUser(uid);
               storage.clearUser(uid);
               await auth.logout();
               go("home");
@@ -473,7 +551,7 @@ function rulesView() {
           ],
           [
             "04 / Confira em conjunto",
-            "No online, todos votam 0, 5 ou 10 em cada resposta, inclusive nas vazias. A palavra é aprovada quando todos concordam. Cada participante confirma o fim da revisão.",
+            "A sugestão automática vale por padrão. Se alguém discordar, todos votam na palavra contestada; o líder pode desempatar. Cada participante confirma cada categoria.",
           ],
           [
             "05 / Some boas histórias",
@@ -485,7 +563,7 @@ function rulesView() {
         el(
           "p",
           { class: "notice" },
-          "Após STOP, o online mantém uma janela de 8 segundos para o envio final. Voz, anúncios e checkout web ainda não estão disponíveis.",
+          "STOP encerra imediatamente a rodada e preserva as respostas que já chegaram ao servidor. Voz, anúncios e checkout web ainda não estão disponíveis.",
         ),
         button("Vamos jogar", () => go("local"), "primary"),
       ),
@@ -563,6 +641,7 @@ async function roomView() {
     }
     case "closed":
       realtime.stop();
+      forgetRoom(storage, auth.user?.uid);
       return {
         node: el(
           "section",
@@ -594,9 +673,13 @@ async function render() {
   ctx.route = route;
   mounted?.cleanup?.();
   mounted = null;
-  screen.replaceChildren(
-    el("p", { class: "loading" }, "Preparando a próxima jogada…"),
-  );
+  if (route !== "home")
+    screen.replaceChildren(
+      el("div", { class: "loading-wheel", role: "status", "aria-label": "A carregar" },
+        el("div", { class: "loading-wheel-disc", "aria-hidden": "true" }),
+        el("span", {}, "A carregar…"),
+      ),
+    );
   let view;
   try {
     if (!ctx.bundle) {
@@ -729,8 +812,33 @@ async function render() {
     mounted.roomIdentity = `${state.room?.room_id}:${state.room?.game_id}:${state.room?.round_id}:${state.room?.status}:${state.room?.host}`;
   screen.focus({ preventScroll: true });
 }
+const seenDecisions = new Set();
+function announceDecision(room) {
+  for (const decision of room.review?.decisions || []) {
+    const id = `${room.room_id}:${room.round_id}:${decision.category}:${decision.at}`;
+    if (seenDecisions.has(id)) continue;
+    seenDecisions.add(id);
+    const category = room.categories[decision.category] || "Categoria";
+    const summary = el("div", { class: "decision-summary" },
+      el("p", {}, `${category}: pontuações definidas pelo líder.`),
+      ...Object.entries(decision.scores || {}).map(([key, score]) => {
+        const playerId = key.slice(0, key.lastIndexOf(":"));
+        const name = playerId === auth.user?.uid ? "EU" : String(room.players[playerId]?.name || "Jogador").split("@")[0];
+        return el("p", {}, `${name}: ${score} pontos`);
+      }));
+    queueMicrotask(() => {
+      if (ctx.route === "room" && state.room?.round_id === room.round_id)
+        dialog(decision.mode === "majority" ? "O líder decidiu pela maioria" : "O líder definiu a pontuação final", summary);
+    });
+  }
+}
 state.addEventListener("change", () => {
-  if (ctx.route !== "room" || !state.room) return;
+  if (state.room && auth.user) {
+    rememberRoom(storage, auth.user.uid, state.room);
+    if (["finished", "closed"].includes(state.room.status)) drafts.clearUser(auth.user.uid);
+  }
+  if (restoringSession || ctx.route !== "room" || !state.room) return;
+  announceDecision(state.room);
   const room = state.room,
     identity = `${room.room_id}:${room.game_id}:${room.round_id}:${room.status}:${room.host}`;
   if (identity === mounted?.roomIdentity && mounted.update)
@@ -756,16 +864,16 @@ document
   .addEventListener("click", () => go("profile"));
 window.addEventListener("hashchange", () => render());
 window.addEventListener("online", () => {
-  if (state.room) reconnect();
+  if (auth.user) reconnect();
   else connection("");
 });
 window.addEventListener("offline", () =>
   connection(
-    "Sem rede. O modo local continua disponível com regras já carregadas.",
+    "Ligação de rede indisponível neste momento. O modo local continua disponível.",
   ),
 );
 document.addEventListener("visibilitychange", () => {
-  if (!document.hidden && state.room) reconnect();
+  if (!document.hidden && auth.user) reconnect();
   else if (
     document.hidden &&
     ctx.route === "room" &&
@@ -791,7 +899,12 @@ await auth.init(async (user) => {
   ctx.profile = null;
   ctx.entitlements = null;
   document.querySelector("#friends-badge").hidden = true;
-  if (user) await task(null, () => loadAccount(user));
-  await render();
+  document.querySelector("#friends-nav").hidden = !user;
+  let resumed = false;
+  if (user) {
+    await task(null, () => loadAccount(user));
+    if (profileReady) resumed = await restoreSession();
+  }
+  if (!resumed) await render();
 });
 await render();

@@ -161,6 +161,8 @@ export async function mockAPI(
         return fail("ROOM_NOT_FOUND", 404);
       const action = pathname.replace("/rooms/ABCDE/", "");
       if (method === "GET") {
+        if (action === "answers/me")
+          return ok(fixture.drafts.a || { round_id: room.round_id, sequence: -1, answers: room.categories.map(() => ""), final: false });
         if (action === "results")
           return ok({
             game_id: room.game_id,
@@ -195,43 +197,30 @@ export async function mockAPI(
           return fail("STALE_ANSWERS");
         fixture.drafts.a = { ...body };
         room.answers.a = body.answers;
-        if (body.final && room.stop_at) {
-          room.status = "review";
-          room.answers.b = room.categories.map((_, i) => (i ? "" : "Cinza"));
-          room.suggested = {
-            a: room.categories.map(() => 10),
-            b: room.categories.map((_, i) => (i ? 0 : 10)),
-          };
-          room.review = {
-            category: 0,
-            epochs: {},
-            votes: {},
-            approved: {},
-            done: {},
-          };
-        }
-      } else if (action === "stop") room.stop_at = Date.now();
+      } else if (action === "stop") {
+        room.stop_at = Date.now();
+        fixture.drafts.a = { ...body, round_id: room.round_id, final: true };
+        room.answers.a = body.answers;
+        room.status = "review";
+        room.answers.b = room.categories.map((_, i) => (i ? "" : "Cinza"));
+        room.suggested = {
+          a: room.categories.map(() => 10),
+          b: room.categories.map((_, i) => (i ? 0 : 10)),
+        };
+        room.review = { category: 0, epochs: {}, votes: {}, approved: {}, disputed: {}, done: {}, decisions: [] };
+      }
       else if (action === "review/votes") {
         for (const [key, vote] of Object.entries(body.votes)) {
-          if (Object.hasOwn(room.review.approved, key))
-            return fail("ITEM_LOCKED");
-          if (vote.e !== (room.review.epochs[key] || 0))
-            return fail("INVALID_VOTE");
-          room.review.votes.a ||= {};
-          room.review.votes.b ||= {};
-          room.review.votes.a[key] = vote;
-          room.review.votes.b[key] ||= {
-            v:
-              key.startsWith("b:") && !room.answers.b[Number(key.split(":")[1])]
-                ? 0
-                : 10,
-            e: vote.e,
-          };
-          const other = room.review.votes.b[key];
-          if (other.e === vote.e && other.v === vote.v)
-            room.review.approved[key] = vote.v;
+          if (Object.hasOwn(room.review.approved, key)) return fail("ITEM_LOCKED");
+          if (vote.e !== (room.review.epochs[key] || 0)) return fail("INVALID_VOTE");
+          const [id, index] = key.split(":");
+          if (vote.v !== room.suggested[id][Number(index)]) room.review.disputed[key] = true;
+          if (room.review.disputed[key]) {
+            room.review.votes.a ||= {};
+            room.review.votes.a[key] = vote;
+            room.review.done = {};
+          }
         }
-        room.review.done.a = false;
       } else if (action === "review/reopen") {
         delete room.review.approved[body.key];
         room.review.epochs[body.key] = (room.review.epochs[body.key] || 0) + 1;
@@ -240,34 +229,31 @@ export async function mockAPI(
       } else if (action === "review/force" || action === "review/next") {
         for (const id of room.participants) {
           const key = `${id}:${room.review.category}`;
-          if (!Object.hasOwn(room.review.approved, key)) {
-            if (action === "review/force") {
-              const vote = room.review.votes.a?.[key];
-              if (!vote || vote.e !== (room.review.epochs[key] || 0))
-                return fail("HOST_VOTE_MISSING");
-              room.review.approved[key] = vote.v;
-            } else return fail("REVIEW_PENDING");
-          }
+          room.review.approved[key] ??= room.suggested[id][room.review.category];
         }
-        room.review.category = Math.min(
-          room.categories.length - 1,
-          room.review.category + 1,
-        );
+        room.review.category = Math.min(room.categories.length - 1, room.review.category + 1);
       } else if (action === "review/complete") {
+        const unresolved = room.participants.some((id) => {
+          const key = `${id}:${room.review.category}`;
+          return room.review.disputed[key] && !Object.hasOwn(room.review.approved, key);
+        });
+        if (unresolved) return fail("REVIEW_PENDING");
         room.review.done.a = true;
         if (room.review.done.b) {
-          room.status = "results";
-          room.results = Object.fromEntries(
-            room.participants.map((id) => [
-              id,
-              room.categories.map((_, i) => room.review.approved[`${id}:${i}`]),
-            ]),
-          );
-          for (const id of room.participants)
-            room.players[id].score = room.results[id].reduce(
-              (a, b) => a + b,
-              0,
-            );
+          for (const id of room.participants) {
+            const key = `${id}:${room.review.category}`;
+            room.review.approved[key] ??= room.suggested[id][room.review.category];
+          }
+          if (room.review.category < room.categories.length - 1) {
+            room.review.category++;
+            room.review.done = {};
+          } else {
+            room.status = "results";
+            room.results = Object.fromEntries(room.participants.map((id) => [id,
+              room.categories.map((_, i) => room.review.approved[`${id}:${i}`]) ]));
+            for (const id of room.participants)
+              room.players[id].score = room.results[id].reduce((a, b) => a + b, 0);
+          }
         }
       } else if (action === "review/unlock") room.review.done.a = false;
       else if (action === "rounds") room.status = "finished";

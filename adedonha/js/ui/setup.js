@@ -127,6 +127,12 @@ export async function setup(ctx, mode = "settings") {
     },
     "ghost small",
   );
+  const nickname = el("input", {
+    value: storage.get("guestNickname", ""),
+    maxlength: 24,
+    placeholder: "Ex.: Ana",
+    autocomplete: "nickname",
+  });
   const start = button(
     mode === "online"
       ? "Criar sala online  ↗"
@@ -156,7 +162,7 @@ export async function setup(ctx, mode = "settings") {
           rounds: Number(rounds.value),
           timer: Number(timer.value),
         };
-        if (mode === "online") return ctx.createRoom(settings);
+        if (mode === "online") return ctx.createRoom(settings, nickname.value);
         if (mode === "room-settings") {
           await ctx.client.mutate(
             "settings",
@@ -171,7 +177,13 @@ export async function setup(ctx, mode = "settings") {
         }
         storage.set("preferences", settings);
         ctx.lang = lang;
-        if (mode === "local") ctx.startLocal(settings);
+        if (mode === "local") {
+          const google = ctx.auth.user && !ctx.auth.user.isAnonymous;
+          const name = google ? ctx.auth.user.email : nickname.value.trim();
+          if (!google && (Array.from(name).length < 2 || Array.from(name).length > 24)) throw new Error("Informe um apelido entre 2 e 24 caracteres.");
+          if (!google) storage.set("guestNickname", name);
+          ctx.startLocal({ ...settings, player_name: name });
+        }
         else {
           toast("Configurações salvas.");
           ctx.go("home");
@@ -195,6 +207,9 @@ export async function setup(ctx, mode = "settings") {
       el(
         "div",
         { class: "panel stack" },
+        (["local", "online"].includes(mode) && (!ctx.auth.user || ctx.auth.user.isAnonymous)) && field("Seu apelido", nickname),
+        mode === "online" && ctx.auth.user && !ctx.auth.user.isAnonymous && el("p", { class: "note" }, `Participar como ${ctx.auth.user.email}`),
+        mode === "online" && (!ctx.auth.user || ctx.auth.user.isAnonymous) && button("Usar Google (opcional)", (event) => task(event.currentTarget, () => ctx.loginGoogle()), "ghost", { disabled: !ctx.auth.sdk }),
         el(
           "div",
           { class: "two-column" },

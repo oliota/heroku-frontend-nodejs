@@ -135,12 +135,19 @@ export class ApiClient {
             (controller.signal.aborted && !this.controllers.has(controller))
           )
             throw new ApiError("CANCELLED");
-          if (error instanceof ApiError) throw error;
-          if (attempt >= retries)
+          if (error instanceof ApiError) {
+            error.path ||= path;
+            error.method ||= method;
+            throw error;
+          }
+          if (attempt >= retries) {
+            const offline = typeof navigator !== "undefined" && navigator.onLine === false;
+            const timedOut = controller.signal.aborted && !signal?.aborted;
             throw new ApiError(
-              "NETWORK_ERROR",
-              "Não foi possível conectar à API.",
+              offline ? "DEVICE_OFFLINE" : timedOut ? "API_TIMEOUT" : "API_UNREACHABLE",
+              offline ? "Dispositivo sem ligação de rede." : timedOut ? "O servidor demorou a responder." : "O serviço online não respondeu. A internet pode estar a funcionar normalmente.",
             );
+          }
           await pause(400 * 2 ** attempt);
         } finally {
           clearTimeout(timeout);
@@ -158,7 +165,7 @@ export class ApiClient {
     } catch (error) {
       if (
         mutation &&
-        (error.code === "NETWORK_ERROR" || error.status >= 500) &&
+        (["NETWORK_ERROR", "DEVICE_OFFLINE", "API_TIMEOUT", "API_UNREACHABLE"].includes(error.code) || error.status >= 500) &&
         generation === this.generation
       )
         this.uncertain.set(fingerprint, key);

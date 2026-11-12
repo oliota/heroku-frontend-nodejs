@@ -1,340 +1,255 @@
-import { el, button, heading, task, toast } from "./dom.js";
-import { reviewItem, allApproved } from "../state.js";
+import { el, button, heading, task } from "./dom.js";
+import { reviewItem } from "../state.js";
 import { confirm, dialog } from "./dialogs.js";
-export function review(ctx, room) {
-  let viewing = room.review.category;
-  const list = el("div"),
-    tabs = el("div", {
-      class: "category-tabs",
-      "aria-label": "Categorias da revisão",
-    }),
-    controls = el("div", { class: "actions" }),
-    progress = el("p", { class: "note" }),
-    title = el("h2");
+
+const shortName = (name, own) => own ? "EU" : String(name || "Jogador").split("@")[0].slice(0, 24);
+const scoreColor = (value) => `score-${Number(value) === 10 ? 10 : Number(value) === 5 ? 5 : 0}`;
+const isDisputed = (room, key) => !!room.review.disputed?.[key];
+const resolved = (room, key) => !isDisputed(room, key) || Object.hasOwn(room.review.approved || {}, key);
+
+export function review(ctx, initial) {
   const uid = ctx.auth.user.uid;
-  let current = room,
-    waitingDialog = false,
-    missing = false;
-  async function act(action, extra = {}, options = {}) {
-    await ctx.client.mutate(`review/${action}`, extra, {
+  const tabs = el("div", { class: "category-tabs review-tabs", "aria-label": "Categorias da revisão" });
+  const title = el("h2");
+  const progress = el("p", { class: "note review-progress", role: "status" });
+  const table = el("div", { class: "review-table-wrap" });
+  const desktopBoard = el("div", { class: "review-desktop-board", "aria-label": "Etapas da revisão" });
+  const actions = el("div", { class: "actions" });
+  let room = initial;
+  let viewing = initial.review.category;
+  let waitingDialog = false;
+  let missingHostVote = false;
+
+  async function mutate(action, extra = {}, options = {}) {
+    return ctx.client.mutate(`review/${action}`, extra, {
       round: true,
-      valid: (r) => r.status === "review",
+      valid: (current) => current.status === "review",
       ...options,
     });
   }
-  function draw(next) {
-    current = next;
-    if (viewing > next.review.category) viewing = next.review.category;
-    const displayedCategory = viewing;
-    const active = viewing === next.review.category,
-      host = next.host === uid;
-    title.textContent = next.categories[viewing];
-    tabs.replaceChildren(
-      ...next.categories.map((category, i) =>
-        button(
-          `${i + 1}. ${category}`,
-          () => {
-            viewing = i;
-            draw(current);
-          },
-          i === viewing ? "active" : "",
-          { disabled: i > next.review.category },
-        ),
-      ),
-    );
-    list.replaceChildren(
-      ...next.participants.map((id) => {
-        const item = reviewItem(next, id, viewing),
-          player = next.players[id];
-        const ownVote = next.review.votes?.[uid]?.[item.key],
-          hostVote = next.review.votes?.[next.host]?.[item.key];
-        const hostMissing =
-          missing && !item.approved && (!hostVote || hostVote.e !== item.epoch);
-        const score = button(
-          item.approved
-            ? `${item.score}`
-            : ownVote?.e === item.epoch
-              ? `${ownVote.v}`
-              : "?",
-          () => {
-            list
-              .querySelectorAll(".vote-tray")
-              .forEach((node) => node.remove());
-            const tray = el(
-              "div",
-              {
-                class: "vote-tray",
-                role: "group",
-                "aria-label": "Escolha sua pontuação",
-              },
-              [0, 5, 10].map((value) =>
-                button(
-                  value,
-                  (event) =>
-                    task(event.currentTarget, async () => {
-                      tray.remove();
-                      await act(
-                        "votes",
-                        { votes: { [item.key]: { v: value, e: item.epoch } } },
-                        {
-                          method: "PUT",
-                          valid: (r) =>
-                            r.status === "review" &&
-                            r.review.category === displayedCategory &&
-                            reviewItem(r, id, displayedCategory).epoch ===
-                              item.epoch &&
-                            !reviewItem(r, id, displayedCategory).approved,
-                          applied: (r) => {
-                            const vote = r.review.votes?.[uid]?.[item.key];
-                            return vote?.v === value && vote.e === item.epoch;
-                          },
-                        },
-                      );
-                    }),
-                  "",
-                  { "aria-label": `Votar ${value} em ${player.name}` },
-                ),
-              ),
-            );
-            card.append(tray);
-            tray.querySelector("button")?.focus();
-          },
-          "score-button",
-          {
-            disabled: item.approved || !active || !!next.review.done?.[uid],
-            "aria-label": `Pontuação de ${player.name}`,
-          },
-        );
-        const voteDetails = next.participants
-          .map((voter) => {
-            const vote = next.review.votes?.[voter]?.[item.key];
-            return `${next.players[voter]?.name || voter}: ${vote?.e === item.epoch ? vote.v : "aguardando"}`;
-          })
-          .join(" · ");
-        const card = el(
-          "article",
-          {
-            class: `review-card ${id === uid ? "own" : ""} ${hostMissing ? "missing-vote" : ""}`,
-            "data-review-key": item.key,
-          },
-          el(
-            "div",
-            { class: "review-meta" },
-            el(
-              "strong",
-              {},
-              player.name,
-              id === uid && el("span", { class: "tag" }, "VOCÊ"),
-            ),
-            el(
-              "span",
-              { class: "tag" },
-              item.approved
-                ? "✓ APROVADA"
-                : item.votes.length === next.participants.length
-                  ? "VOTOS DIVERGENTES"
-                  : `${item.votes.length}/${next.participants.length} votos`,
-            ),
-          ),
-          el(
-            "div",
-            { class: "review-meta" },
-            el(
-              "div",
-              {},
-              el(
-                "p",
-                { class: "review-word" },
-                next.answers[id]?.[viewing] || "— resposta vazia —",
-              ),
-              el(
-                "p",
-                { class: "note" },
-                `Sugestão: ${next.suggested[id]?.[viewing] ?? 0} pontos · época ${item.epoch}`,
-              ),
-            ),
-            score,
-          ),
-          el("div", { class: "votes" }, voteDetails),
-          item.approved &&
-            host &&
-            button(
-              "Reabrir palavra",
-              (event) =>
-                task(event.currentTarget, async () => {
-                  if (
-                    await confirm(
-                      "Reabrir esta palavra?",
-                      "Os votos antigos e todas as confirmações de conclusão serão invalidados.",
-                    )
-                  )
-                    await act(
-                      "reopen",
-                      { key: item.key },
-                      {
-                        applied: (r) =>
-                          reviewItem(r, id, displayedCategory).epoch >
-                          item.epoch,
-                      },
-                    );
-                }),
-              "ghost small",
-            ),
-        );
-        return card;
-      }),
-    );
-    const approved = Object.keys(next.review.approved || {}).length,
-      total = next.participants.length * next.categories.length;
-    progress.textContent = `${approved}/${total} palavras aprovadas · ${Object.values(next.review.done || {}).filter(Boolean).length}/${next.participants.length} jogadores terminaram`;
-    controls.replaceChildren();
-    if (host && active) {
-      const categoryApproved = next.participants.every(
-        (id) => reviewItem(next, id, viewing).approved,
+
+  async function vote(key, value, epoch, category) {
+    await mutate("votes", { votes: { [key]: { v: value, e: epoch } } }, {
+      method: "PUT",
+      valid: (r) => r.status === "review" && r.review.category === category &&
+        (r.review.epochs?.[key] ?? 0) === epoch &&
+        !Object.hasOwn(r.review.approved || {}, key),
+    });
+  }
+
+  function buildTable(current, category) {
+    const active = current.review.category === category;
+    const box = el("div", { class: "review-table" },
+      el("div", { class: "review-table-head" },
+        el("span", {}, "Participante"), el("span", {}, "Palavra"),
+        el("span", {}, "Pontos"), el("span", {}, "Estado")));
+    current.participants.forEach((id) => {
+      const item = reviewItem(current, id, category);
+      const playerName = shortName(current.players[id]?.name, id === uid);
+      const suggested = Number(current.suggested[id]?.[category] ?? 0);
+      const dispute = isDisputed(current, item.key);
+      const ownVote = current.review.votes?.[uid]?.[item.key];
+      const canVote = active && !item.approved && !current.review.done?.[uid];
+      const scoreValue = item.approved ? item.score : dispute && ownVote?.e === item.epoch ? ownVote.v : suggested;
+      const score = button(String(scoreValue), () => {}, `score-button ${scoreColor(scoreValue)}`, {
+        disabled: !canVote,
+        "aria-label": `Alterar pontuação de ${playerName}`,
+      });
+      const votesCount = dispute ? item.votes.length : 0;
+      const status = item.approved ? "✓ Aprovada" : dispute
+        ? `${votesCount}/${current.participants.length} votos`
+        : "";
+      const ballots = current.participants.map((voter) => {
+        const ballot = current.review.votes?.[voter]?.[item.key];
+        return { name: shortName(current.players[voter]?.name, voter === uid), value: ballot?.e === item.epoch ? Number(ballot.v) : null };
+      });
+      const divergent = dispute && new Set(ballots.filter((entry) => entry.value !== null).map((entry) => entry.value)).size > 1;
+      const card = el("div", { class: `review-table-row ${id === uid ? "own" : ""} ${divergent ? "review-divergent" : ""}` },
+        el("div", { class: "review-cell participant-cell" },
+          el("strong", {}, playerName),
+          null),
+        el("div", { class: "review-cell word-cell" },
+          el("strong", { class: "review-word compact" }, current.answers[id]?.[category] || "— resposta vazia —")),
+        el("div", { class: "review-cell score-cell" }, score),
+        el("div", { class: "review-cell votes-cell" },
+          status && el("span", { class: `vote-state ${item.approved ? "approved" : "pending"}` }, status),
+          dispute && !item.approved && el("div", { class: "vote-comparison" }, ballots.map((entry) =>
+            el("span", { class: `vote-pill ${entry.value === null ? "waiting" : scoreColor(entry.value)}` },
+              el("strong", {}, entry.name), el("b", {}, entry.value === null ? "…" : String(entry.value))))),
+          item.approved && current.host === uid && button("Reabrir", (event) =>
+            task(event.currentTarget, async () => {
+              if (await confirm("Reabrir esta palavra?", "A categoria precisará de nova aprovação."))
+                await mutate("reopen", { key: item.key });
+            }), "ghost small")),
       );
-      if (viewing < next.categories.length - 1)
-        controls.append(
-          button(
-            "Próxima categoria →",
-            (event) =>
-              task(event.currentTarget, () =>
-                act(
-                  "next",
-                  {},
-                  {
-                    applied: (r) => r.review.category > displayedCategory,
-                    valid: (r) =>
-                      r.status === "review" &&
-                      r.review.category === displayedCategory,
-                  },
-                ),
-              ),
-            "secondary",
-            { disabled: !categoryApproved },
-          ),
-        );
-      if (!categoryApproved)
-        controls.append(
-          button(
-            "Forçar conclusão da revisão",
-            (event) =>
-              task(event.currentTarget, async () => {
-                if (
-                  !(await confirm(
-                    "Forçar esta categoria?",
-                    "O servidor aplicará o seu voto explícito em cada palavra pendente. Notas aprovadas serão preservadas. Todos ainda precisarão confirmar a conclusão da revisão.",
-                  ))
-                )
-                  return;
-                try {
-                  await act(
-                    "force",
-                    {},
-                    {
-                      valid: (r) =>
-                        r.status === "review" &&
-                        r.review.category === displayedCategory,
-                      applied: (r) =>
-                        r.status === "review" &&
-                        r.review.category > displayedCategory,
-                    },
-                  );
-                  missing = false;
-                } catch (error) {
-                  if (error.code === "HOST_VOTE_MISSING") {
-                    missing = true;
-                    draw(current);
-                  }
-                  throw error;
-                }
-              }),
-            "ghost",
-          ),
-        );
-    }
-    controls.append(
-      button(
-        next.review.done?.[uid]
-          ? "Ainda não terminei, quero revisar mais um pouco..."
-          : "Terminei de revisar",
-        (event) =>
-          task(event.currentTarget, async () => {
-            if (current.review.done?.[uid]) {
-              await act(
-                "unlock",
-                {},
-                { applied: (r) => !r.review.done?.[uid] },
-              );
-              return;
-            }
-            await act(
-              "complete",
-              {},
-              {
-                applied: (r) =>
-                  !!r.review.done?.[uid] || r.status === "results",
-              },
-            );
-            if (ctx.state.room.status === "review") showWaiting();
-          }),
-        "primary",
-        { disabled: !allApproved(next) && !next.review.done?.[uid] },
-      ),
+      score.onclick = () => {
+        if (!canVote) return;
+        table.querySelectorAll(".vote-tray").forEach((node) => node.remove());
+        const tray = el("div", { class: "vote-tray", role: "group", "aria-label": "Pontuação" },
+          [0, 5, 10].map((value) => button(value, (event) => task(event.currentTarget, async () => {
+            tray.remove();
+            if (!dispute && value === suggested) return;
+            await vote(item.key, value, item.epoch, category);
+          }), "", { "aria-label": `${value} pontos` })));
+        card.append(tray);
+        tray.querySelector("button")?.focus();
+      };
+      box.append(card);
+    });
+    return box;
+  }
+
+  function desktopCategory(current, category) {
+    const active = category === current.review.category;
+    const completed = category < current.review.category;
+    const panel = el("section", {
+      class: `desktop-category ${active ? "current" : completed ? "completed" : "future"}`,
+      "aria-label": `${category + 1}. ${current.categories[category]}`,
+    });
+    panel.append(el("header", { class: "desktop-category-title" },
+      el("strong", {}, `${category + 1}. ${current.categories[category]}`),
+      el("span", {}, completed ? "✓" : active ? "Em revisão" : "A seguir")));
+    current.participants.forEach((id) => {
+      const item = reviewItem(current, id, category);
+      const suggested = Number(current.suggested[id]?.[category] ?? 0);
+      const dispute = isDisputed(current, item.key);
+      const ownVote = current.review.votes?.[uid]?.[item.key];
+      const value = item.approved ? item.score : dispute && ownVote?.e === item.epoch ? ownVote.v : suggested;
+      const canVote = active && !item.approved && !current.review.done?.[uid];
+      const score = button(String(value), () => {}, `score-button ${scoreColor(value)}`, {
+        disabled: !canVote,
+        "aria-label": `Pontuação de ${shortName(current.players[id]?.name, id === uid)}`,
+      });
+      const entry = el("div", { class: `desktop-category-entry ${id === uid ? "own" : ""}` },
+        el("span", { class: "desktop-category-player" }, shortName(current.players[id]?.name, id === uid)),
+        el("strong", { class: "desktop-category-word" }, current.answers[id]?.[category] || "—"),
+        score,
+      );
+      if (dispute) entry.append(el("span", { class: "desktop-category-votes" },
+        `${item.votes.length}/${current.participants.length} votos`));
+      score.onclick = () => {
+        if (!canVote) return;
+        desktopBoard.querySelectorAll(".vote-tray").forEach((node) => node.remove());
+        const tray = el("div", { class: "vote-tray", role: "group", "aria-label": "Alterar pontuação" },
+          [0, 5, 10].map((points) => button(String(points), (event) => task(event.currentTarget, async () => {
+            tray.remove();
+            if (!dispute && points === suggested) return;
+            await vote(item.key, points, item.epoch, category);
+          }), scoreColor(points))));
+        entry.append(tray);
+      };
+      panel.append(entry);
+    });
+    return panel;
+  }
+
+  function sizeDesktopBoard() {
+    desktopBoard.style.gridTemplateColumns = `repeat(${room.categories.length}, minmax(220px, 1fr))`;
+  }
+
+  function draw(next) {
+    room = next;
+    if (viewing > next.review.category) viewing = next.review.category;
+    const active = viewing === next.review.category;
+    const category = next.review.category;
+    const keys = next.participants.map((id) => `${id}:${category}`);
+    const disputes = keys.filter((key) => isDisputed(next, key));
+    const outstanding = disputes.filter((key) => !resolved(next, key));
+    const acknowledged = Object.values(next.review.done || {}).filter(Boolean).length;
+    const total = next.participants.length;
+    title.textContent = `${viewing + 1}. ${next.categories[viewing]} · ${next.letter}`;
+    progress.textContent = `${disputes.length ? `${disputes.length} palavra(s) contestada(s)` : "Sugestões automáticas"} · ${outstanding.length} pendente(s) · ${acknowledged}/${total} confirmaram esta categoria`;
+    tabs.replaceChildren(
+      ...next.categories.map((name, index) => button(`${index + 1}. ${name}`, () => {
+        viewing = index;
+        draw(room);
+      }, index === viewing ? "active" : "", { disabled: index > next.review.category })),
+      button("Fim", () => {
+        dialog("Etapa final", "A revisão termina automaticamente quando todos confirmam a última categoria.");
+      }, "", { disabled: next.review.category < next.categories.length - 1 }),
     );
-    if (waitingDialog && !next.review.done?.[uid]) {
-      document.querySelector("#dialog").close();
+    table.replaceChildren(buildTable(next, viewing));
+    desktopBoard.replaceChildren(...next.categories.map((_, index) => desktopCategory(next, index)));
+    queueMicrotask(sizeDesktopBoard);
+    actions.replaceChildren();
+    if (!active) {
+      actions.append(button("Categoria atual", () => {
+        viewing = category;
+        draw(room);
+      }, "secondary"));
+    } else if (next.review.done?.[uid]) {
+      actions.append(button("Rever esta categoria", (event) =>
+        task(event.currentTarget, () => mutate("unlock")), "ghost"));
+    } else {
+      if (outstanding.length === 0) actions.append(button(
+        "Concordar e avançar",
+        (event) => task(event.currentTarget, async () => {
+          await mutate("complete", {}, {
+            applied: (r) => r.status === "results" || !!r.review.done?.[uid] || r.review.category > category,
+          });
+          if (ctx.state.room?.status === "review" && ctx.state.room.review.category === category)
+            await showWaiting();
+        }),
+        "primary",
+      ));
+      if (next.host === uid && outstanding.length) {
+        actions.append(button("Decidir pela maioria", (event) => task(event.currentTarget, async () => {
+          if (!await confirm("Decidir pela maioria?", "A pontuação de cada palavra contestada seguirá a maioria dos votos. Em empate, seu voto desempata.")) return;
+          try {
+            await mutate("force", { mode: "majority" });
+            missingHostVote = false;
+          } catch (error) {
+            if (error.code === "HOST_VOTE_MISSING") missingHostVote = true;
+            draw(room);
+            throw error;
+          }
+        }), "secondary"));
+        actions.append(button("Decidir valor final", (event) => task(event.currentTarget, async () => {
+          if (!await confirm("Decisão final do líder", "Seu voto valerá como decisão nas palavras contestadas. Defina seu voto em cada palavra antes de continuar.")) return;
+          try {
+            await mutate("force", { mode: "leader" });
+            missingHostVote = false;
+          } catch (error) {
+            if (error.code === "HOST_VOTE_MISSING") missingHostVote = true;
+            draw(room);
+            throw error;
+          }
+        }), "ghost"));
+      }
+    }
+    if (missingHostVote && outstanding.length)
+      actions.append(el("p", { class: "review-warning" }, "Escolha seu voto nas palavras contestadas antes de desempatar."));
+    if (waitingDialog && (!next.review.done?.[uid] || next.status !== "review")) {
+      document.querySelector("#dialog")?.close();
       waitingDialog = false;
     }
   }
+
   async function showWaiting() {
     if (waitingDialog) return;
     waitingDialog = true;
-    const undo = await dialog(
-      "Revisão concluída por você",
-      "Você terminou sua revisão. Aguardando os outros jogadores validarem e finalizarem.",
-      [
-        { label: "Aguardar", value: false },
-        {
-          label: "Ainda não terminei, quero revisar mais um pouco...",
-          value: true,
-          variant: "ghost",
-        },
-      ],
-    );
+    const undo = await dialog("Categoria confirmada", "Aguardando os outros confirmarem. A próxima categoria abrirá automaticamente.", [
+      { label: "Aguardar", value: false },
+      { label: "Rever esta categoria", value: true, variant: "ghost" },
+    ]);
     waitingDialog = false;
     if (undo && ctx.state.room?.status === "review")
-      await task(null, () =>
-        act("unlock", {}, { applied: (r) => !r.review.done?.[uid] }),
-      );
+      await task(null, () => mutate("unlock"));
   }
-  draw(room);
+
+  window.addEventListener("resize", sizeDesktopBoard);
+  draw(initial);
   return {
-    node: el(
-      "section",
-      { class: "narrow" },
-      heading(
-        "TODO MUNDO TEM VOZ",
-        "Vamos conferir?",
-        "Vote em todas as palavras, inclusive nas vazias e nas suas. A pontuação só é aprovada por unanimidade.",
-      ),
-      progress,
-      tabs,
-      title,
-      list,
-      controls,
-      el(
-        "p",
-        { class: "note" },
-        "Microfone indisponível. Combine as notas com a turma pelos votos.",
-      ),
-    ),
+    node: el("section", { class: "narrow review-screen" },
+      heading("VOTAÇÃO ONLINE", "Revisão da rodada", "As sugestões valem por padrão. Toque nos pontos apenas para contestar."),
+      tabs, title, progress, table, desktopBoard, actions),
     update(next) {
-      if (next.review.category !== current.review.category)
-        viewing = next.review.category;
+      if (room.review.category !== next.review.category) viewing = next.review.category;
       draw(next);
     },
     cleanup() {
-      if (waitingDialog) document.querySelector("#dialog").close();
+      if (waitingDialog) document.querySelector("#dialog")?.close();
+      window.removeEventListener("resize", sizeDesktopBoard);
     },
   };
 }

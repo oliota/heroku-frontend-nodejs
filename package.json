@@ -8,7 +8,7 @@
     "heroku:init": "heroku login && heroku create heroku-backend-nodejs --stack heroku-22",
     "heroku:push": "git push heroku main",
     "heroku:open": "heroku open",
-    "dev": "node server.js",
+    "dev": "nodemon",
     "----": "echo ---------- INSTALL ----------",
     "install:deps": "npm install",
     "-----": "echo ---------- RUN ----------",
@@ -25,13 +25,15 @@
     "logs": "node scripts/commands.mjs logs",
     "status": "npm ls --depth=0",
     "list": "npm run",
-    "help": "npm run list"
+    "help": "npm run list",
+    "watch": "npm run dev"
   },
   "dependencies": {
     "express": "^4.18.2"
   },
   "devDependencies": {
     "@playwright/test": "^1.65.0",
-    "prettier": "^3.9.10"
+    "prettier": "^3.9.10",
+    "nodemon": "^3.1.10"
   }
 }

@@ -243,6 +243,7 @@ test("draft writes are serialized, increasing, restored from server and keep lat
   const state = new RoomState();
   state.apply(room());
   let pending;
+  let stored = { round_id: "round1", sequence: 9, answers: ["Cinza", "", ""], final: false };
   const calls = [],
     statuses = [];
   const drafts = new Drafts({
@@ -258,10 +259,12 @@ test("draft writes are serialized, increasing, restored from server and keep lat
       }),
     },
     client: {
+      api: { get: async () => stored },
       mutate: async (action, body) => {
         calls.push(body);
         if (calls.length === 1)
           await new Promise((resolve) => (pending = resolve));
+        stored = { ...body, round_id: "round1" };
       },
     },
     onStatus: (text) => statuses.push(text),
@@ -308,13 +311,16 @@ test("failed drafts retry the original sequence and text before sending newer ed
   const state = new RoomState();
   state.apply(room());
   const calls = [];
+  let stored = { round_id: "round1", sequence: -1, answers: ["", "", ""], final: false };
   const drafts = new Drafts({
     state,
     auth: { db: {}, user: { uid: "a" }, draft: async () => null },
     client: {
+      api: { get: async () => stored },
       mutate: async (_, body) => {
         calls.push(body);
         if (calls.length === 1) throw new ApiError("NETWORK_ERROR");
+        stored = { ...body, round_id: "round1" };
       },
     },
     onStatus: () => {},
@@ -376,4 +382,66 @@ test("realtime listens read-only, polls timed game, sends 25s heartbeat and clea
   await Promise.resolve();
   assert.equal(polls, count);
   assert.equal(unsubscribed, 1);
+});
+test("drafts survive an interrupted session and verify the final server receipt", async (t) => {
+  const old = globalThis.sessionStorage;
+  const data = new Map();
+  globalThis.sessionStorage = {
+    getItem: (key) => data.get(key) || null,
+    setItem: (key, value) => data.set(key, value),
+  };
+  t.after(() => (globalThis.sessionStorage = old));
+  const state = new RoomState();
+  state.apply(room());
+  const auth = { user: { uid: "a" } };
+  let saved = { round_id: "round1", sequence: -1, answers: ["", "", ""], final: false };
+  let fail = true;
+  const client = {
+    api: { get: async () => saved },
+    mutate: async (_, body) => {
+      if (fail) throw new ApiError("NETWORK_ERROR");
+      saved = { ...body, round_id: "round1" };
+      return room({ version: state.room.version + 1 });
+    },
+  };
+  const first = new Drafts({ state, auth, client, onStatus: () => {}, onError: () => {} });
+  await first.restore();
+  first.edit(0, "Bruno");
+  await assert.rejects(first.flush(), { code: "NETWORK_ERROR" });
+  first.reset();
+  fail = false;
+  const resumed = new Drafts({ state, auth, client, onStatus: () => {}, onError: () => {} });
+  await resumed.restore();
+  assert.equal(resumed.answers[0], "Bruno");
+  await resumed.flush(true);
+  assert.equal(saved.answers[0], "Bruno");
+  assert.equal(saved.final, true);
+  assert.equal(resumed.final, true);
+  resumed.reset();
+});
+test("STOP submits the latest local answers atomically without a grace period", async () => {
+  const state = new RoomState();
+  state.apply(room());
+  const calls = [];
+  const drafts = new Drafts({
+    state,
+    auth: { user: { uid: "a" } },
+    client: {
+      api: { get: async () => ({ round_id: "round1", sequence: -1, answers: ["", "", ""], final: false }) },
+      mutate: async (action, payload) => {
+        calls.push({ action, payload });
+        return room({ version: 2, status: "review", stop_at: Date.now() });
+      },
+    },
+    onStatus: () => {},
+    onError: () => {},
+  });
+  await drafts.restore();
+  drafts.edit(0, "Cinza");
+  await drafts.stopNow();
+  assert.deepEqual(calls[0].payload.answers, ["Cinza", "", ""]);
+  assert.equal(calls[0].action, "stop");
+  assert.equal(calls[0].payload.sequence, 0);
+  assert.equal(drafts.final, true);
+  drafts.reset();
 });

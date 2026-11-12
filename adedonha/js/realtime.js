@@ -36,7 +36,7 @@ export class Realtime {
       if (generation === this.generation)
         this.pollTimer = setTimeout(
           poll,
-          this.state.room?.status === "playing" ? 1000 : 4000,
+          ["playing", "review", "letter_selection"].includes(this.state.room?.status) ? 1250 : 4000,
         );
     };
     this.pollTimer = setTimeout(poll, 1000);
@@ -77,42 +77,98 @@ export class Drafts {
     clearTimeout(this.timer);
     this.generation = (this.generation || 0) + 1;
     this.answers = [];
-    this.sequence = 0;
+    this.sequence = -1;
     this.final = false;
     this.revision = 0;
     this.savedRevision = 0;
     this.key = "";
+    this.cacheKey = "";
     this.ready = false;
     this.sending = null;
     this.pendingSubmission = null;
   }
+  clearUser(uid) {
+    try {
+      const prefix = `adedonha:draft:${uid}:`;
+      for (let i = sessionStorage.length - 1; i >= 0; i--) {
+        const key = sessionStorage.key(i);
+        if (key?.startsWith(prefix)) sessionStorage.removeItem(key);
+      }
+    } catch {}
+  }
+  cache() {
+    try {
+      return JSON.parse(sessionStorage.getItem(this.cacheKey) || "null");
+    } catch {
+      return null;
+    }
+  }
+  persist(dirty = true) {
+    if (!this.cacheKey) return;
+    try {
+      sessionStorage.setItem(
+        this.cacheKey,
+        JSON.stringify({
+          answers: this.answers,
+          sequence: this.sequence,
+          dirty,
+          final: this.final,
+        }),
+      );
+    } catch {}
+  }
   async restore() {
     this.reset();
-    const room = this.state.room,
-      generation = this.generation;
+    const room = this.state.room;
+    const generation = this.generation;
     this.key = `${room.game_id}:${room.round_id}`;
-    this.answers = room.categories.map(() => "");
-    if (!this.auth.db)
-      throw new Error(
-        "Não foi possível recuperar o rascunho privado. Reconecte ao Firebase antes de digitar.",
-      );
-    const saved = await this.auth.draft(room.code, this.auth.user.uid);
+    this.cacheKey = `adedonha:draft:${this.auth.user.uid}:${room.room_id}:${this.key}`;
+    const previous = this.cache();
+    const saved = await this.client.api.get(`/rooms/${room.code}/answers/me`);
     if (generation !== this.generation) return;
-    if (saved?.round_id === room.round_id) {
-      this.sequence = saved.sequence;
-      this.answers = [...saved.answers];
-      this.final = saved.final;
+    this.sequence = saved?.round_id === room.round_id ? saved.sequence : -1;
+    this.answers = saved?.round_id === room.round_id
+      ? [...saved.answers]
+      : room.categories.map(() => "");
+    this.final = saved?.round_id === room.round_id && saved.final === true;
+    const pending = !this.final && previous?.dirty === true &&
+      Array.isArray(previous.answers) && previous.answers.length === room.categories.length;
+    if (pending) {
+      this.answers = [...previous.answers];
+      this.sequence = Math.max(this.sequence, previous.sequence ?? -1);
+      this.revision = 1;
     }
     this.ready = true;
-    this.onStatus(this.final ? "Respostas finais recebidas" : "Sincronizado");
+    this.persist(pending);
+    this.onStatus(this.final ? "Respostas finais recebidas" : pending ? "Retomando respostas pendentes…" : "Sincronizado");
+    if (pending) this.timer = setTimeout(() => this.flush().catch(this.onError), 150);
   }
   edit(index, value) {
     if (!this.ready || this.final) return;
     this.answers[index] = value;
     this.revision++;
+    this.persist();
     this.onStatus("Salvando…");
     clearTimeout(this.timer);
-    this.timer = setTimeout(() => this.flush().catch(this.onError), 1100);
+    this.timer = setTimeout(() => this.flush().catch(this.onError), 250);
+  }
+  async stopNow() {
+    clearTimeout(this.timer);
+    if (!this.ready) throw Object.assign(new Error("Respostas ainda não carregadas."), { code: "INVALID_STATE" });
+    if (this.sending) await this.sending;
+    const answers = this.answers.map((answer) => String(answer).trim());
+    const sequence = ++this.sequence;
+    const room = this.state.room;
+    const result = await this.client.mutate("stop", this.final ? {} : { answers, sequence }, {
+      round: true,
+      valid: (r) => r.status === "playing",
+      applied: (r) => !!r.stop_at || r.status === "review",
+    });
+    this.final = true;
+    this.savedRevision = this.revision;
+    this.persist(false);
+    this.onStatus("STOP confirmado. Respostas encerradas.");
+    return result;
   }
   async flush(final = false) {
     clearTimeout(this.timer);
@@ -121,11 +177,11 @@ export class Drafts {
       await this.sending;
       return this.flush(final);
     }
-    if (!final && this.savedRevision === this.revision) return;
+    if (!final && this.savedRevision === this.revision && !this.pendingSubmission) return;
     const requestedFinal = final;
     const generation = this.generation;
     const submission = this.pendingSubmission || {
-      answers: [...this.answers],
+      answers: this.answers.map((answer) => String(answer).trim()),
       sequence: ++this.sequence,
       final,
       revision: this.revision,
@@ -133,6 +189,7 @@ export class Drafts {
     const { answers, sequence, revision } = submission;
     final = submission.final;
     this.pendingSubmission = submission;
+    this.persist();
     this.sending = this.client.mutate(
       "answers",
       { answers, final, sequence },
@@ -146,29 +203,30 @@ export class Drafts {
     try {
       await this.sending;
       if (generation !== this.generation) return;
+      if (final) {
+        const saved = await this.client.api.get(`/rooms/${this.state.room.code}/answers/me`);
+        if (saved.round_id !== this.state.room.round_id || !saved.final ||
+            JSON.stringify(saved.answers) !== JSON.stringify(answers)) {
+          throw Object.assign(new Error("O servidor não confirmou suas respostas finais."), { code: "ANSWER_SAVE_MISMATCH" });
+        }
+      }
       this.pendingSubmission = null;
       this.savedRevision = revision;
       this.final = final;
-      this.onStatus(
-        final
-          ? "Respostas finais recebidas"
-          : this.savedRevision === this.revision
-            ? "Sincronizado"
-            : "Salvando…",
-      );
+      this.persist(this.revision !== this.savedRevision && !this.final);
+      if (this.final) {
+        try { sessionStorage.removeItem(this.cacheKey); } catch {}
+      }
+      this.onStatus(final ? "Respostas finais recebidas" : this.savedRevision === this.revision ? "Sincronizado" : "Salvando…");
     } catch (error) {
+      this.persist();
       this.onStatus("Envio pendente — tente novamente");
       throw error;
     } finally {
       if (generation === this.generation) this.sending = null;
     }
-    if (requestedFinal && !final && generation === this.generation)
-      return this.flush(true);
-    if (
-      !final &&
-      generation === this.generation &&
-      this.revision !== this.savedRevision
-    )
-      this.timer = setTimeout(() => this.flush().catch(this.onError), 1100);
+    if (requestedFinal && !final && generation === this.generation) return this.flush(true);
+    if (!final && generation === this.generation && this.revision !== this.savedRevision)
+      this.timer = setTimeout(() => this.flush().catch(this.onError), 250);
   }
 }

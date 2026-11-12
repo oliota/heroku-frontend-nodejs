@@ -1,0 +1,12 @@
+{
+  "watch": [
+    "server.js",
+    "adedonha"
+  ],
+  "ext": "js,json,html,css",
+  "ignore": [
+    "node_modules",
+    "tests"
+  ],
+  "exec": "node server.js"
+}

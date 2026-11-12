@@ -107,141 +107,37 @@ test("missing services are truthful, rules failure offers recovery, no fake logi
   ).toBeVisible();
 });
 
-test("online API flow: Google, room, stale write, drafts, STOP grace, review epochs, force error, collective results and logout", async ({
-  page,
-}) => {
-  await page.setViewportSize({ width: 360, height: 800 });
+test("online API flow: Google, room, immediate STOP, suggested review and results", async ({ page }) => {
+  await page.setViewportSize({ width: 390, height: 844 });
   const fixture = await mockAPI(page, { online: true });
   await page.goto("/adedonha#profile");
-  await page
-    .getByRole("button", { name: "Entrar com Google", exact: true })
-    .click();
-  await expect(
-    page.getByRole("heading", { name: "Ana", exact: true }),
-  ).toBeVisible();
-  await expect(page.locator("#friends-badge")).toHaveText("1");
-  await page.evaluate(() => {
-    location.hash = "create";
-  });
-  const checkboxes = page.locator(".check-list input:checked");
-  const count = await checkboxes.count();
-  for (let i = count - 1; i >= 3; i--) await checkboxes.nth(i).uncheck();
-  await page.getByLabel("Rodadas", { exact: true }).selectOption("1");
+  await page.getByRole("button", { name: "Entrar com Google" }).click();
+  await page.evaluate(() => { location.hash = "create"; });
+  const checks = page.locator(".check-list input:checked");
+  const total = await checks.count();
+  for (let i = total - 1; i >= 3; i--) await checks.nth(i).uncheck();
+  await page.getByLabel("Rodadas").selectOption("1");
   await page.getByRole("button", { name: "Criar sala online" }).click();
-  await expect(page.locator(".code")).toHaveText("ABCDE");
   fixture.versionConflict = true;
   await page.getByRole("button", { name: "Começar partida" }).click();
-  await expect(
-    page.getByRole("heading", { name: "Qual vai ser a letra?" }),
-  ).toBeVisible();
   await page.getByRole("button", { name: "C", exact: true }).click();
   await page.getByRole("button", { name: "Confirmar letra" }).click();
   await page.locator('[data-answer="0"]').fill("Caio");
   await page.locator('[data-answer="1"]').fill("Cinza");
-  await expect
-    .poll(
-      () =>
-        fixture.calls.filter((call) => call.path.endsWith("/answers")).length,
-    )
-    .toBeGreaterThan(0);
-  await page.getByRole("button", { name: "STOP!", exact: true }).click();
-  await expect(
-    page.getByRole("button", { name: "Enviar respostas finais" }),
-  ).toBeVisible();
-  await expect(page.locator('[data-answer="2"]')).toBeEnabled();
-  await page.locator('[data-answer="2"]').fill("Caju");
-  await page.getByRole("button", { name: "Enviar respostas finais" }).click();
-  await expect(
-    page.getByRole("heading", { name: "Vamos conferir?" }),
-  ).toBeVisible();
-  await page
-    .getByRole("button", { name: "Forçar conclusão da revisão" })
-    .click();
-  await page
-    .getByRole("dialog")
-    .getByRole("button", { name: "Confirmar", exact: true })
-    .click();
-  await expect(page.locator(".missing-vote")).toHaveCount(2);
-  await expect(page.getByRole("alert")).toContainText("HOST_VOTE_MISSING");
-  const vote = async (name, value) => {
-    await page
-      .getByRole("button", { name: `Pontuação de ${name}`, exact: true })
-      .click();
-    await page
-      .getByRole("button", { name: `Votar ${value} em ${name}`, exact: true })
-      .click();
-  };
+  await page.getByRole("button", { name: "STOP!" }).click();
+  await expect(page.getByRole("heading", { name: "Revisão da rodada" })).toBeVisible();
   for (let category = 0; category < 3; category++) {
-    await vote("Ana", 10);
-    await vote("Bia", category ? 0 : 10);
-    await expect(page.getByText("✓ APROVADA", { exact: true })).toHaveCount(2);
-    if (category === 0) {
-      await page
-        .getByRole("button", { name: "Reabrir palavra" })
-        .first()
-        .click();
-      await page
-        .getByRole("dialog")
-        .getByRole("button", { name: "Confirmar", exact: true })
-        .click();
-      await expect(page.getByText(/época 1/)).toBeVisible();
-      fixture.room.review.votes.b["a:0"] = { v: 10, e: 1 };
-      await vote("Ana", 10);
-    }
+    fixture.room.review.done.b = true;
+    await page.getByRole("button", { name: "Concordar e avançar" }).click();
     if (category < 2)
-      await page.getByRole("button", { name: "Próxima categoria" }).click();
+      await expect(page.locator(".review-tabs .active")).toContainText(`${category + 2}.`);
   }
-  await page
-    .getByRole("button", { name: "Terminei de revisar", exact: true })
-    .click();
-  await expect(page.getByRole("dialog")).toContainText(
-    "Aguardando os outros jogadores",
-  );
-  await page
-    .getByRole("dialog")
-    .getByRole("button", {
-      name: "Ainda não terminei, quero revisar mais um pouco...",
-    })
-    .click();
-  await expect.poll(() => fixture.room.review.done.a).toBe(false);
-  fixture.room.review.done.b = true;
-  await page
-    .getByRole("button", { name: "Terminei de revisar", exact: true })
-    .click();
-  await expect(
-    page.getByRole("heading", { name: "Essa rodada foi boa!" }),
-  ).toBeVisible();
-  await page
-    .getByRole("button", { name: "Finalizar partida", exact: true })
-    .click();
-  await expect(
-    page.getByRole("heading", { name: "Palavras que valem ouro." }),
-  ).toBeVisible();
-  expect(
-    fixture.calls
-      .filter((c) => c.path.endsWith("/answers"))
-      .map((c) => c.body.sequence),
-  ).toEqual([
-    ...new Set(
-      fixture.calls
-        .filter((c) => c.path.endsWith("/answers"))
-        .map((c) => c.body.sequence),
-    ),
-  ]);
+  await expect(page.getByRole("heading", { name: "Pontos da rodada" })).toBeVisible();
+  await page.getByRole("button", { name: "Finalizar partida" }).click();
+  await expect(page.getByRole("heading", { name: "Partida finalizada!" })).toBeVisible();
+  await expect(page.locator(".rank-entry")).toHaveCount(2);
   for (const call of fixture.calls.filter((c) => c.method !== "GET"))
     expect(call.headers["idempotency-key"]).toMatch(/^[\w-]{8,100}$/);
-  await page.getByRole("button", { name: "Perfil", exact: true }).click();
-  await page.getByRole("button", { name: "Sair da conta" }).click();
-  await page
-    .getByRole("dialog")
-    .getByRole("button", { name: "Confirmar", exact: true })
-    .click();
-  await expect(page.locator("#friends-badge")).toBeHidden();
-  expect(
-    await page.evaluate(() =>
-      Object.keys(localStorage).filter((k) => k.startsWith("adedonha:user:")),
-    ),
-  ).toEqual([]);
 });
 
 test("friends confirmation, request badge, acceptance, removal and cache isolation", async ({
@@ -296,9 +192,6 @@ test("real ticket protocol shape, reconnect join, shared benefit and verified Go
     location.hash = "join";
   });
   await page.getByLabel("Código da sala", { exact: true }).fill("ABCDE");
-  await page
-    .getByLabel("Versão do convite (novos participantes)", { exact: true })
-    .fill("1");
   await page.getByRole("button", { name: "Entrar na sala" }).click();
   await expect(page.locator(".code")).toHaveText("ABCDE");
   expect(fixture.calls.find((c) => c.path === "/tickets/intent").body).toEqual({

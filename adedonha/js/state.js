@@ -158,7 +158,15 @@ export class RoomClient {
         }
       }
     };
-    const next = this.queue.then(run);
+    const next = this.queue.then(async () => {
+      const blocking = ["start", "rounds", "letters/confirm", "stop", "review/complete", "review/force", "review/next"].includes(action);
+      if (blocking) this.onBusy?.(true, "Sincronizando com a sala…");
+      try {
+        return await run();
+      } finally {
+        if (blocking) this.onBusy?.(false);
+      }
+    });
     this.queue = next.catch(() => {});
     return next;
   }

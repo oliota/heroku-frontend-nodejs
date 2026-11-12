@@ -1,5 +1,6 @@
 import { el, button, heading, field, task, toast } from "./dom.js";
 import { confirm } from "./dialogs.js";
+import { storage } from "../storage.js";
 export function join(ctx) {
   const params = new URLSearchParams(location.search);
   const code = el("input", {
@@ -11,12 +12,11 @@ export function join(ctx) {
     required: "",
     pattern: `[${ctx.bundle.rules.online.code_alphabet}]{5}`,
   });
-  const version = el("input", {
-    value: params.get("version") || "",
-    type: "number",
-    min: "0",
-    step: "1",
-    placeholder: "Incluída no convite atualizado do líder",
+  const nickname = el("input", {
+    value: storage.get("guestNickname", ""),
+    maxlength: 24,
+    placeholder: "Ex.: Ana",
+    autocomplete: "nickname",
   });
   code.addEventListener("input", () => {
     code.value = code.value.toUpperCase();
@@ -31,10 +31,7 @@ export function join(ctx) {
           ).test(code.value)
         )
           throw new Error("Confira o código de 5 caracteres da sala.");
-        await ctx.joinRoom(
-          code.value,
-          version.value === "" ? undefined : Number(version.value),
-        );
+        await ctx.joinRoom(code.value, nickname.value);
       }),
     "primary",
   );
@@ -51,13 +48,10 @@ export function join(ctx) {
         "div",
         { class: "panel stack" },
         field("Código da sala", code),
-        field("Versão do convite (novos participantes)", version),
-        el(
-          "p",
-          { class: "notice" },
-          "O backend atual exige a versão da sala para uma nova entrada e não oferece consulta a não membros. Peça ao líder um link recém-copiado. Quem já participa pode reconectar sem informar a versão.",
-        ),
+        (!ctx.auth.user || ctx.auth.user.isAnonymous) && field("Seu apelido", nickname),
+        ctx.auth.user && !ctx.auth.user.isAnonymous && el("p", { class: "note" }, `Participar como ${ctx.auth.user.email}`),
         submit,
+        (!ctx.auth.user || ctx.auth.user.isAnonymous) && button("Usar Google (opcional)", (event) => task(event.currentTarget, () => ctx.loginGoogle()), "ghost", { disabled: !ctx.auth.sdk }),
       ),
     ),
   };
@@ -65,7 +59,7 @@ export function join(ctx) {
 export function lobby(ctx, room) {
   const host = room.host === ctx.auth.user.uid;
   const invite = () =>
-    `${location.origin}/adedonha?room=${encodeURIComponent(ctx.state.room.code)}&version=${ctx.state.room.version}#join`;
+    `${location.origin}/adedonha?room=${encodeURIComponent(ctx.state.room.code)}#join`;
   const players = el("div"),
     details = el("div"),
     status = el("p", { class: "notice" });
@@ -149,12 +143,11 @@ export function lobby(ctx, room) {
               "ghost",
             ),
             button(
-              "Copiar convite atualizado",
+              "Copiar convite",
               (event) =>
                 task(event.currentTarget, async () => {
-                  await ctx.client.refresh();
                   await navigator.clipboard.writeText(invite());
-                  toast("Convite com a versão atual copiado.");
+                  toast("Convite copiado.");
                 }),
               "secondary",
             ),

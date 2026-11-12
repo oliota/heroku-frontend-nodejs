@@ -32,6 +32,10 @@ test("existing routes, game aliases, runtime configuration and module assets", a
     assert.equal((await fetch(base + route)).status, 200, route);
   const config = await fetch(base + "/adedonha/runtime-config.js");
   assert.match(config.headers.get("content-type"), /javascript/);
-  assert.match(await config.text(), /ADEDONHA_CONFIG/);
+  const runtime = await config.text();
+  assert.match(runtime, /ADEDONHA_CONFIG/);
+  assert.match(runtime, /adedonha-stop/);
+  assert.match(runtime, /firebaseapp\.com/);
+  assert.doesNotMatch(runtime, /PRIVATE_KEY|CLIENT_EMAIL|BEGIN PRIVATE KEY/);
   assert.equal((await fetch(base + "/adedonha/js/missing.js")).status, 404);
 });

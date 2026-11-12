@@ -27,6 +27,8 @@
           ><span>ADEDONHA<small>O clássico das palavras.</small></span></a
         >
         <nav aria-label="Navegação principal">
+          <a class="header-site-link" href="https://oliota.com" target="_blank" rel="noopener noreferrer" aria-label="Visitar oliota.com">oliota.com ↗</a>
+          <button id="layout-mode" class="profile-button layout-mode-button" type="button" title="Alternar visualização desktop/mobile">Modo mobile</button>
           <button
             id="friends-nav"
             class="icon-button"
@@ -42,13 +44,11 @@
       </header>
       <div id="connection" class="connection" role="status" hidden></div>
       <main id="screen" tabindex="-1">
-        <p class="loading">Preparando a roda…</p>
+        <div class="loading-wheel" role="status" aria-label="A carregar"><div class="loading-wheel-disc" aria-hidden="true"></div><span>A carregar…</span></div>
       </main>
-      <footer class="site-footer">
-        <span>ADEDONHA <b>×</b> STOP</span
-        ><span>Uma letra. Infinitas possibilidades.</span
-        ><a href="/">oliota.com ↗</a>
-      </footer>
+    </div>
+    <div id="online-busy" class="online-busy" role="status" aria-live="polite" hidden>
+      <div class="busy-panel"><span class="busy-spinner" aria-hidden="true"></span><strong id="busy-message">Processando…</strong></div>
     </div>
     <div id="notifications" aria-live="polite" aria-atomic="true"></div>
     <dialog id="dialog" aria-labelledby="dialog-title"></dialog>
